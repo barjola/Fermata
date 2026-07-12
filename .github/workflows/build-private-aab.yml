@@ -1,0 +1,70 @@
+name: Build Private AAB for Google Play
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and Release Private AAB
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Modify applicationId in build.gradle
+        run: |
+          # Reemplazar el applicationId base por el nuevo paquete
+          sed -i "s/applicationId project.getProperties().getOrDefault('APP_ID', 'me.aap.fermata')/applicationId 'es.barjola.fermata'/g" fermata/build.gradle
+
+      - name: Create keystore and local.properties
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > keystore.jks
+          
+          cat > local.properties <<EOF
+          storeFile=$(pwd)/keystore.jks
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          EOF
+
+      - name: Build AAB
+        env:
+          NO_GS: true
+        run: |
+          # Genera el App Bundle para el flavor 'auto' en modo Release
+          ./gradlew fermata:bundleAutoRelease
+
+      - name: Generate Release Tag
+        id: generate_tag
+        run: |
+          TAG="v$(date +'%Y.%m.%d-%H%M')"
+          echo "TAG=$TAG" >> $GITHUB_ENV
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Private AAB Release ${{ env.TAG }}
+          files: fermata/build/outputs/bundle/autoRelease/*.aab
+          draft: false
+          prerelease: false
